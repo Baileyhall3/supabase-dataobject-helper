@@ -2,7 +2,7 @@
   "name": "supabase-dataobject-helper",
   "displayName": "Supabase Data Object Helper",
   "description": "An extension to simplify creating data objects from supabase for use in your VSCode project.",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "publisher": "BHDesign",
   "engines": {
     "vscode": "^1.100.0"
