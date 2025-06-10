@@ -2,19 +2,26 @@ import * as vscode from 'vscode';
 import { DataObjectOptions, DataObjectField, WhereClause, SortConfig, SupabaseConfig } from './types';
 import { ConfigManager } from './configManager';
 import { DataObject } from './dataObject';
+import { DataObjectManager, StoredDataObject } from './dataObjectManager';
 
 export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'supabaseDataObjectHelper.configView';
 
     private _view?: vscode.WebviewView;
     private configManager: ConfigManager;
-    private dataObjects: Map<string, DataObject> = new Map();
+    private dataObjectManager: DataObjectManager;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
         private readonly context: vscode.ExtensionContext
     ) {
         this.configManager = new ConfigManager(context);
+        this.dataObjectManager = DataObjectManager.getInstance(context);
+        
+        // Listen for data object changes
+        this.dataObjectManager.onDataObjectsChanged((dataObjects) => {
+            this.updateDataObjectsList(dataObjects);
+        });
     }
 
     public resolveWebviewView(
@@ -98,9 +105,8 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
     private async handleClearConfig() {
         const success = await this.configManager.clearSupabaseConfig();
         if (success) {
-            // Clear all data objects
-            this.dataObjects.forEach(dataObject => dataObject.dispose());
-            this.dataObjects.clear();
+            // Clear all data objects through the manager
+            this.dataObjectManager.clearAllDataObjects();
             
             this._view?.webview.postMessage({
                 type: 'configCleared'
@@ -108,38 +114,36 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async handleCreateDataObject(options: DataObjectOptions) {
-        const config = await this.configManager.getSupabaseConfig();
-        if (!config) {
-            vscode.window.showErrorMessage('No Supabase configuration found. Please configure Supabase first.');
+    private async handleCreateDataObject(options: DataObjectOptions & { name: string }) {
+        if (!options.name) {
+            vscode.window.showErrorMessage('Please provide a name for the data object.');
             return;
         }
 
-        try {
-            const dataObject = new DataObject(config, options);
-            const key = `${options.viewName}_${Date.now()}`;
-            this.dataObjects.set(key, dataObject);
-
+        const dataObject = await this.dataObjectManager.createDataObject(options.name, options);
+        if (dataObject) {
             // Set up data change listener
             dataObject.onDataChanged((data) => {
                 this._view?.webview.postMessage({
                     type: 'dataObjectDataChanged',
-                    key,
+                    name: options.name,
                     data,
                     options
                 });
             });
-
-            vscode.window.showInformationMessage(`Data object '${options.viewName}' created successfully!`);
-            
-            this._view?.webview.postMessage({
-                type: 'dataObjectCreated',
-                key,
-                options
-            });
-        } catch (error) {
-            vscode.window.showErrorMessage(`Error creating data object: ${error}`);
         }
+    }
+
+    private updateDataObjectsList(dataObjects: StoredDataObject[]) {
+        this._view?.webview.postMessage({
+            type: 'dataObjectsListUpdated',
+            dataObjects: dataObjects.map(obj => ({
+                id: obj.id,
+                name: obj.name,
+                viewName: obj.options.viewName,
+                createdAt: obj.createdAt
+            }))
+        });
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
@@ -300,6 +304,11 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
     <div class="section">
         <h3>Create Data Object</h3>
         <div class="form-group">
+            <label for="dataObjectName">Data Object Name (ID):</label>
+            <input type="text" id="dataObjectName" placeholder="myUsers" required>
+            <small style="color: var(--vscode-descriptionForeground);">This will be used as the ID to access the data object from your code</small>
+        </div>
+        <div class="form-group">
             <label for="viewName">Table/View Name:</label>
             <input type="text" id="viewName" placeholder="users">
         </div>
@@ -376,6 +385,13 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
         </div>
         
         <button onclick="createDataObject()">Create Data Object</button>
+    </div>
+
+    <div class="section">
+        <h3>Data Objects</h3>
+        <div id="dataObjectsList">
+            <p>No data objects created yet.</p>
+        </div>
     </div>
 
     <div class="section">
@@ -460,7 +476,14 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
         }
         
         function createDataObject() {
+            const dataObjectName = document.getElementById('dataObjectName').value;
             const viewName = document.getElementById('viewName').value;
+            
+            if (!dataObjectName) {
+                alert('Please provide a data object name (ID)');
+                return;
+            }
+            
             if (!viewName) {
                 alert('Please provide a table/view name');
                 return;
@@ -497,6 +520,7 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
             } : undefined;
             
             const options = {
+                name: dataObjectName,
                 viewName,
                 fields: fields.length > 0 ? fields : undefined,
                 whereClauses: whereClauses.length > 0 ? whereClauses : undefined,
@@ -529,9 +553,13 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
                     document.getElementById('supabaseAnonKey').value = '';
                     document.getElementById('projectName').value = '';
                     document.getElementById('dataPreview').innerHTML = 'No data objects created yet.';
+                    document.getElementById('dataObjectsList').innerHTML = '<p>No data objects created yet.</p>';
                     break;
                 case 'dataObjectDataChanged':
-                    updateDataPreview(message.key, message.data, message.options);
+                    updateDataPreview(message.name, message.data, message.options);
+                    break;
+                case 'dataObjectsListUpdated':
+                    updateDataObjectsList(message.dataObjects);
                     break;
             }
         });
@@ -545,6 +573,34 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
             preview.innerHTML = dataHtml;
         }
         
+        function updateDataObjectsList(dataObjects) {
+            const listContainer = document.getElementById('dataObjectsList');
+            
+            if (dataObjects.length === 0) {
+                listContainer.innerHTML = '<p>No data objects created yet.</p>';
+                return;
+            }
+            
+            const listHtml = dataObjects.map(obj => \`
+                <div style="padding: 10px; margin-bottom: 10px; border: 1px solid var(--vscode-panel-border); border-radius: 3px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>\${obj.name}</strong> 
+                            <span style="color: var(--vscode-descriptionForeground);">(\${obj.viewName})</span>
+                        </div>
+                        <div style="font-size: 0.9em; color: var(--vscode-descriptionForeground);">
+                            Created: \${new Date(obj.createdAt).toLocaleString()}
+                        </div>
+                    </div>
+                    <div style="margin-top: 5px; font-size: 0.9em; color: var(--vscode-descriptionForeground);">
+                        Access with: <code>getDataObjectById('\${obj.id}')</code>
+                    </div>
+                </div>
+            \`).join('');
+            
+            listContainer.innerHTML = listHtml;
+        }
+        
         // Load config on startup
         vscode.postMessage({ type: 'loadSupabaseConfig' });
     </script>
@@ -553,7 +609,7 @@ export class DataObjectWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     public dispose() {
-        this.dataObjects.forEach(dataObject => dataObject.dispose());
-        this.dataObjects.clear();
+        // The DataObjectManager will handle disposing of data objects
+        // No need to dispose them here since we're using the manager
     }
 }

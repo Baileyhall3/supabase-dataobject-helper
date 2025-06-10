@@ -5,6 +5,7 @@ import { DataObjectWebviewProvider } from './webviewProvider';
 import { ConfigManager } from './configManager';
 import { createDataObject } from './dataObject';
 import { DataObjectOptions } from './types';
+import { DataObjectManager } from './dataObjectManager';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -13,6 +14,9 @@ export function activate(context: vscode.ExtensionContext) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Supabase Data Object Helper extension is now active!');
+
+	// Initialize the DataObjectManager singleton
+	DataObjectManager.getInstance(context);
 
 	// Create the webview provider
 	const webviewProvider = new DataObjectWebviewProvider(context.extensionUri, context);
@@ -118,6 +122,30 @@ export function activate(context: vscode.ExtensionContext) {
 		clearConfigCommand,
 		webviewProvider
 	);
+
+	// Return the public API for other extensions/code to use
+	return {
+		getDataObjectById: (id: string) => {
+			const manager = DataObjectManager.getInstance();
+			return manager.getDataObjectById(id);
+		},
+		createDataObject: async (name: string, options: DataObjectOptions) => {
+			const manager = DataObjectManager.getInstance();
+			return await manager.createDataObject(name, options);
+		},
+		getAllDataObjects: () => {
+			const manager = DataObjectManager.getInstance();
+			return manager.getAllDataObjects();
+		},
+		removeDataObject: (id: string) => {
+			const manager = DataObjectManager.getInstance();
+			return manager.removeDataObject(id);
+		},
+		refreshDataObject: async (id: string) => {
+			const manager = DataObjectManager.getInstance();
+			return await manager.refreshDataObject(id);
+		}
+	};
 }
 
 // This method is called when your extension is deactivated
