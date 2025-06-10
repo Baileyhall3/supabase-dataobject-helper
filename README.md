@@ -191,6 +191,12 @@ Initial release of Supabase Data Object Helper:
 - TypeScript support
 - Command palette integration
 
+### 1.0.1
+
+Exposure of JS functions to get data objects from data objects store
+- List of added data objects shown in extension side panel
+- Access data objects from anywhere in app using `getDataObjectById('yourDataObjectName')`
+
 ## Contributing
 
 1. Fork the repository
