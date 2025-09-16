@@ -8,6 +8,7 @@ export class DataObject {
     private data: DataObjectRecord[] = [];
     private eventEmitter = new vscode.EventEmitter<DataObjectRecord[]>();
     public readonly onDataChanged = this.eventEmitter.event;
+    public currentRecord: DataObjectRecord | undefined;
 
     constructor(supabaseConfig: SupabaseConfig, options: DataObjectOptions) {
         this.supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey);
@@ -68,6 +69,9 @@ export class DataObject {
             }
 
             this.data = data || [];
+            if (data.length > 0) {
+                this.currentRecord = data[0];
+            }
             this.eventEmitter.fire(this.data);
         } catch (error) {
             vscode.window.showErrorMessage(`Error loading data: ${error}`);
